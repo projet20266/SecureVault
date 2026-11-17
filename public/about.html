@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Confidentialité — SecureVault</title>
+    <style>
+      :root {
+        --bg: #f4f6f9;
+        --surface: #ffffff;
+        --text: #111827;
+        --muted: #5d697a;
+        --line: #dde5ee;
+        --accent: #1f2f46;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, "Segoe UI", sans-serif;
+        line-height: 1.7;
+      }
+      a { color: var(--accent); text-decoration: none; }
+      .container { max-width: 900px; margin: 0 auto; padding: 0 22px; }
+      header {
+        background: rgba(255,255,255,0.8);
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(12px);
+      }
+      .nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        min-height: 72px;
+      }
+      .brand { font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+      .main {
+        padding: 64px 0 80px;
+      }
+      h1 {
+        font-size: clamp(2.2rem, 5vw, 3.5rem);
+        letter-spacing: -0.05em;
+        margin: 0 0 18px;
+      }
+      p { color: var(--muted); }
+      .box {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        padding: 24px;
+        margin-top: 18px;
+      }
+      ul { color: var(--muted); }
+      .footer {
+        padding: 20px 0 36px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="container nav">
+        <a class="brand" href="/">SecureVault</a>
+        <a href="/app">Ouvrir le coffre</a>
+      </div>
+    </header>
+
+    <main class="container main">
+      <h1>Confidentialité et sécurité</h1>
+      <p>SecureVault ne demande pas d’email ni de nom. Le mot de passe maître ne quitte jamais l’appareil. Le serveur reçoit uniquement des blocs chiffrés et des empreintes de jeton.</p>
+
+      <div class="box">
+        <h2>Ce que le serveur sait</h2>
+        <ul>
+          <li>une empreinte du numéro de compte</li>
+          <li>une empreinte du jeton de connexion</li>
+          <li>le coffre chiffré</li>
+          <li>la date de fin d’abonnement</li>
+        </ul>
+      </div>
+
+      <div class="box">
+        <h2>Ce que le serveur ne sait pas</h2>
+        <ul>
+          <li>le mot de passe maître</li>
+          <li>le contenu du coffre</li>
+          <li>votre identité réelle</li>
+          <li>les adresses IP des accès</li>
+        </ul>
+      </div>
+
+      <div class="box">
+        <h2>Le compromis</h2>
+        <p>Si tu perds ton numéro de compte, ton mot de passe maître et ton kit de récupération, aucun intervenant ne peut rouvrir le coffre. C’est le prix de la confidentialité.</p>
+      </div>
+    </main>
+
+    <div class="container footer">
+      <a href="/">Retour à l’accueil</a>
+    </div>
+  </body>
+</html>

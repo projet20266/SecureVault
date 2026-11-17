@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "SecureVault",
+  "version": "0.2.0",
+  "description": "Coffre-fort de mots de passe chiffré dans le navigateur.",
+  "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["https://*/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ],
+  "action": { "default_title": "SecureVault", "default_popup": "popup.html" },
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

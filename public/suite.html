@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SecureVault — coffre-fort privé</title>
+    <style>
+      :root { --bg:#f3f5f8; --surface:#ffffff; --line:#dde4ee; --text:#111827; --muted:#5d697a; --accent:#1f2f46; }
+      * { box-sizing: border-box; }
+      body { margin:0; background: var(--bg); color: var(--text); font-family: Inter, "Segoe UI", sans-serif; }
+      a { color: inherit; text-decoration: none; }
+      .container { max-width: 920px; margin: 0 auto; padding: 0 22px; }
+      header { border-bottom: 1px solid var(--line); background: rgba(255,255,255,0.8); }
+      .nav { display:flex; justify-content:space-between; align-items:center; min-height:72px; }
+      .brand { font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+      main { padding: 50px 0 80px; }
+      .card { background: var(--surface); border:1px solid var(--line); border-radius:24px; padding:24px; }
+      h1 { font-size: clamp(2.1rem, 5vw, 3.2rem); margin:0 0 16px; letter-spacing:-0.05em; }
+      p, li { color: var(--muted); line-height:1.75; }
+      .row { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:18px; margin-top: 18px; }
+      @media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="container nav">
+        <a class="brand" href="/">SecureVault</a>
+        <a href="/app">Ouvrir le coffre</a>
+      </div>
+    </header>
+
+    <main class="container">
+      <div class="card">
+        <h1>Un coffre-fort privé.</h1>
+        <p>SecureVault aide à gérer les identifiants sans dépendre d’un système social ou d’un email. Le mot de passe maître reste dans le navigateur, le serveur ne reçoit que des données chiffrées ou hachées.</p>
+        <div class="row">
+          <div>
+            <h3>Ce que le serveur stocke</h3>
+            <ul>
+              <li>empreinte du numéro de compte</li>
+              <li>empreinte du jeton de connexion</li>
+              <li>coffre chiffré</li>
+              <li>date de fin d’abonnement</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Ce que le serveur n’a pas besoin de savoir</h3>
+            <ul>
+              <li>mot de passe maître</li>
+              <li>contenu du coffre</li>
+              <li>email ou téléphone</li>
+              <li>journaux d’accès</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
