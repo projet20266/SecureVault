@@ -1,81 +1,62 @@
-const fs = require('fs');
-const crypto = require('crypto');
-const path = require('path');
-
-const BOT_TOKEN = process.env.BOT_TOKEN || 'COLLE_TON_TOKEN_BOTFATHER_ICI';
-const ALLOWED_CHAT = process.env.ALLOWED_CHAT || 'COLLE_TON_IDENTIFIANT_TELEGRAM_ICI';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'change-moi';
+'use strict';
+// Private Telegram admin helper. It can issue a one-minute reset key, never read vault contents.
+const BOT_TOKEN = process.env.BOT_TOKEN || '';
+const ALLOWED_CHAT = process.env.ALLOWED_CHAT || '';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const ADMIN_URL = process.env.ADMIN_URL || 'http://127.0.0.1:3001';
-const SITE_URL = process.env.SITE_URL || 'http://localhost:3000';
-const BANNER_PATH = path.join(__dirname, 'panel-banner.png');
 
-if (BOT_TOKEN.startsWith('COLLE_') || ALLOWED_CHAT.startsWith('COLLE_')) {
-  console.error('Configure BOT_TOKEN et ALLOWED_CHAT avant de lancer le bot.');
-  process.exit(1);
+async function tg(method, body) {
+  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok || !data.ok) throw new Error('Telegram API request failed');
+  return data;
 }
-
-const tg = (method, body = {}) => fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body)
-}).then((r) => r.json());
-
-const adm = (action, payload = {}) => fetch(`${ADMIN_URL}/admin/${action}`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${ADMIN_TOKEN}`
-  },
-  body: JSON.stringify(payload)
-}).then((r) => r.json());
-
-const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
-const authToken = (mp, num) => crypto.pbkdf2Sync(mp, `auth:${num}`, 600000, 32, 'sha256').toString('hex');
-const params = { '30': { days: 30, label: '30 jours', price: '2,99€' }, '90': { days: 90, label: '90 jours', price: '7,99€' } };
-
-async function sell(key, count = 1) {
-  const plan = params[key];
-  if (!plan) return 'Forfait inconnu.';
-  const r = await adm('create', { days: plan.days, count });
-  if (!r.numbers) return 'Erreur de création.';
-  const lines = r.numbers.map((num) => {
-    const safeNum = num.replace(/\s/g, '');
-    const mp = crypto.randomBytes(16).toString('hex');
-    const token = authToken(mp, safeNum);
-    return `Numéro : ${num}\nMot de passe : ${mp}\nJeton : ${token}`;
-  });
-  return lines.join('\n\n');
+async function admin(action, payload) {
+  const r = await fetch(`${ADMIN_URL}/admin/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_TOKEN}` }, body: JSON.stringify(payload) });
+  return { status: r.status, ...(await r.json().catch(() => ({}))) };
 }
+async function issueResetKey(accountNumber) {
+  const number = String(accountNumber || '').replace(/\D/g, '');
+  if (!/^\d{16}$/.test(number)) return { error: 'Le numéro doit contenir 16 chiffres.' };
+  const result = await admin('recovery-key', { num: number });
+  if (result.status !== 200) return { error: result.status === 404 ? 'Compte introuvable.' : 'Impossible de créer une clé (compte non activé ou erreur serveur).' };
+  return { key: result.key, expiresAt: result.expiresAt, ttlSeconds: result.ttlSeconds };
+}
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function start() {
-  const me = await tg('getMe');
-  if (!me.ok) {
-    console.error('Token invalide');
-    process.exit(1);
-  }
-  console.log('Bot actif', me.result.username);
-
+  if (!BOT_TOKEN || !ALLOWED_CHAT || !ADMIN_TOKEN) throw new Error('Configure BOT_TOKEN, ALLOWED_CHAT et ADMIN_TOKEN dans l’environnement.');
+  const me = await tg('getMe', {});
+  console.log(`Bot SecureVault actif (@${me.result.username}).`);
   let offset = 0;
   while (true) {
-    const updates = await tg('getUpdates', { offset, timeout: 30 });
-    if (!updates.ok) continue;
-    for (const item of updates.result || []) {
-      offset = item.update_id + 1;
-      const msg = item.message;
-      if (!msg || !msg.text) continue;
-      if (String(msg.chat.id) !== String(ALLOWED_CHAT)) continue;
-      const text = msg.text.trim();
-      if (text === '/start') {
-        await tg('sendMessage', { chat_id: msg.chat.id, text: 'SecureVault — panel de vente\n/vendre 30 1\n/vendre 90 1' });
-        continue;
+    try {
+      const updates = await tg('getUpdates', { offset, timeout: 25 });
+      for (const update of updates.result || []) {
+        offset = update.update_id + 1;
+        const m = update.message;
+        if (!m || !m.text) continue;
+        // Deny group use and require both the private chat and sender to match the configured owner.
+        if (m.chat.type !== 'private' || String(m.chat.id) !== String(ALLOWED_CHAT) || String(m.from && m.from.id) !== String(ALLOWED_CHAT)) continue;
+        const [command, account] = m.text.trim().split(/\s+/);
+        if (command === '/start' || command === '/help') {
+          await tg('sendMessage', { chat_id: m.chat.id, text: 'SecureVault — récupération administrée\n\n/who <numéro> génère une clé de réinitialisation valable 60 secondes.\n\nLa validation efface définitivement le coffre chiffré existant : le serveur ne peut pas le déchiffrer. Le bot ne révèle jamais de mots de passe.' });
+        } else if (command === '/who') {
+          const result = await issueResetKey(account);
+          const text = result.key
+            ? `Clé temporaire (valide 60 secondes) :\n${result.key}\n\nÀ transmettre uniquement au titulaire. S'il l'utilise sur /recover.html, son mot de passe sera remplacé et l'ancien coffre sera effacé. Cette clé ne permet pas de lire les mots de passe.`
+            : result.error;
+          await tg('sendMessage', { chat_id: m.chat.id, text });
+        } else {
+          await tg('sendMessage', { chat_id: m.chat.id, text: 'Commande inconnue. Utilise /who <numéro> ou /help.' });
+        }
       }
-      if (text.startsWith('/vendre')) {
-        const [, key, count] = text.split(/\s+/);
-        const res = await sell(key || '30', Number(count || 1));
-        await tg('sendMessage', { chat_id: msg.chat.id, text: res });
-      }
+    } catch (error) {
+      console.error('Erreur temporaire du bot Telegram.');
+      await wait(3000);
     }
   }
 }
 
-start();
+if (require.main === module) start().catch((error) => { console.error(error.message); process.exitCode = 1; });
+module.exports = { issueResetKey, start };

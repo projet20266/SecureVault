@@ -1,5 +1,5 @@
 'use strict';
-// SecureVault HTTP server. The server stores only encrypted vault blobs and hashes.
+// SecureVault HTTP server. The server stores encrypted vault blobs and credential hashes only.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -15,6 +15,7 @@ const DAY = 86400000;
 const HEX = /^[a-f0-9]{64}$/;
 const MAX_BODY = 2 * 1024 * 1024;
 const HISTORY_LIMIT = 10;
+const RESET_KEY_TTL = 60 * 1000;
 
 fs.mkdirSync(DATA, { recursive: true, mode: 0o700 });
 const headers = {
@@ -40,9 +41,8 @@ function same(value, hash) {
 }
 function validBlob(blob) {
   if (!blob || typeof blob.iv !== 'string' || typeof blob.d !== 'string') return null;
-  // AES-GCM uses a 12-byte IV. Restrict base64 payloads to valid encodings and reasonable sizes.
   if (!/^[A-Za-z0-9+/]{16}$/.test(blob.iv) || !/^[A-Za-z0-9+/]+={0,2}$/.test(blob.d) || blob.d.length > MAX_BODY) return null;
-  try { if (Buffer.from(blob.iv, 'base64').length !== 12 || !Buffer.from(blob.d, 'base64').length) return null; } catch { return null; }
+  if (Buffer.from(blob.iv, 'base64').length !== 12 || !Buffer.from(blob.d, 'base64').length) return null;
   return { iv: blob.iv, d: blob.d };
 }
 const send = (res, status, value = {}) => {
@@ -52,18 +52,16 @@ const send = (res, status, value = {}) => {
 };
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = '';
+    let data = '', tooLarge = false;
     req.on('data', (chunk) => {
+      if (tooLarge) return;
       data += chunk;
-      if (data.length > MAX_BODY) {
-        const err = new Error('too large'); err.statusCode = 413;
-        reject(err); req.resume();
-      }
+      if (data.length > MAX_BODY) { tooLarge = true; const e = new Error('too large'); e.statusCode = 413; reject(e); }
     });
     req.on('end', () => {
-      if (data.length > MAX_BODY) return;
+      if (tooLarge) return;
       try { resolve(JSON.parse(data || '{}')); }
-      catch { const err = new Error('invalid JSON'); err.statusCode = 400; reject(err); }
+      catch { const e = new Error('invalid JSON'); e.statusCode = 400; reject(e); }
     });
     req.on('error', reject);
   });
@@ -96,6 +94,25 @@ async function api(req, res) {
   }
   if (!rec) return send(res, 404, { error: 'account not found' });
 
+  // One-time administrative recovery. The recovery key is stored only as a hash and
+  // redemption clears the old encrypted vault, because the server cannot re-encrypt it.
+  if (action === 'recover-reset') {
+    if (!rec.resetKeyHash || !Number.isFinite(rec.resetKeyExpiresAt) || Date.now() >= rec.resetKeyExpiresAt || !same(b.resetKey, rec.resetKeyHash)) {
+      bad(id); return send(res, 401, { error: 'invalid or expired recovery key' });
+    }
+    if (!HEX.test(String(b.token || ''))) return send(res, 400, { error: 'invalid token' });
+    rec.th = hx(b.token);
+    rec.blob = null;
+    rec.history = [];
+    rec.version = (rec.version || 0) + 1;
+    delete rec.rth; delete rec.rw; delete rec.dth; delete rec.dblob;
+    delete rec.resetKeyHash; delete rec.resetKeyExpiresAt;
+    rec.devices = [];
+    save(id, rec);
+    failures.delete(id);
+    return send(res, 200, { ok: true, vaultReset: true, version: rec.version });
+  }
+
   if (action === 'claim') {
     if (rec.th !== null && rec.th !== undefined) return send(res, 409, { error: 'account already activated' });
     if (!HEX.test(String(b.token || ''))) return send(res, 400, { error: 'invalid token' });
@@ -122,38 +139,18 @@ async function api(req, res) {
     if (!blob) return send(res, 400, { error: 'invalid encrypted blob' });
     if (!active(rec)) return send(res, 402, { error: 'subscription expired' });
     const version = rec.version || 0;
-    if (b.expectedVersion !== undefined && (!Number.isSafeInteger(b.expectedVersion) || b.expectedVersion !== version)) {
-      return send(res, 409, { error: 'vault changed on another device', version });
-    }
+    if (b.expectedVersion !== undefined && (!Number.isSafeInteger(b.expectedVersion) || b.expectedVersion !== version)) return send(res, 409, { error: 'vault changed on another device', version });
     if (duress) rec.dblob = blob;
     else {
-      if (rec.blob) {
-        rec.history = Array.isArray(rec.history) ? rec.history : [];
-        rec.history.push({ version, savedAt: Date.now(), blob: rec.blob });
-        rec.history = rec.history.slice(-HISTORY_LIMIT);
-      }
-      rec.blob = blob;
-      rec.version = version + 1;
+      if (rec.blob) { rec.history = Array.isArray(rec.history) ? rec.history : []; rec.history.push({ version, savedAt: Date.now(), blob: rec.blob }); rec.history = rec.history.slice(-HISTORY_LIMIT); }
+      rec.blob = blob; rec.version = version + 1;
     }
-    save(id, rec);
-    return send(res, 200, { ok: true, version: rec.version || version });
+    save(id, rec); return send(res, 200, { ok: true, version: rec.version || version });
   }
   if (action === 'setrecovery') {
     const rw = validBlob(b.rw);
     if (!HEX.test(String(b.rtoken || '')) || !rw) return send(res, 400, { error: 'invalid recovery data' });
     rec.rth = hx(b.rtoken); rec.rw = rw; save(id, rec); return send(res, 200, { ok: true });
-  }
-  if (action === 'reset') {
-    if (!real && !same(b.rtoken, rec.rth || '')) return send(res, 403, { error: 'unauthorized' });
-    // Recovery reset authenticates with the recovery key. Normal password reset requires the real token.
-    if (!real && (!rec.rth || !same(b.rtoken, rec.rth))) return send(res, 401, { error: 'invalid recovery key' });
-    const blob = validBlob(b.blob), rw = validBlob(b.rw);
-    if (!HEX.test(String(b.token || '')) || !blob || !rw) return send(res, 400, { error: 'invalid reset data' });
-    if (!real) {
-      rec.th = hx(b.token); rec.blob = blob; rec.rw = rw; delete rec.rth;
-      rec.version = (rec.version || 0) + 1;
-    } else return send(res, 400, { error: 'use password change flow' });
-    save(id, rec); return send(res, 200, { ok: true, version: rec.version });
   }
   if (action === 'setduress') {
     const dblob = validBlob(b.dblob);
@@ -168,25 +165,18 @@ async function api(req, res) {
     rec.th = hx(b.newToken); rec.blob = blob; rec.version = (rec.version || 0) + 1; delete rec.rth; delete rec.rw; save(id, rec);
     return send(res, 200, { ok: true, version: rec.version });
   }
-  if (action === 'delete') {
-    if (!real) return send(res, 403);
-    fs.rmSync(file(id), { force: true }); return send(res, 200, { ok: true });
-  }
+  if (action === 'delete') { if (!real) return send(res, 403); fs.rmSync(file(id), { force: true }); return send(res, 200, { ok: true }); }
   if (action === 'device') {
     if (!/^[a-f0-9]{16,64}$/.test(String(b.deviceId || ''))) return send(res, 400);
     rec.devices = (rec.devices || []).filter((d) => Date.now() - d.seen < 180 * DAY);
-    let device = rec.devices.find((d) => d.id === b.deviceId);
-    const limit = active(rec) ? 5 : 3;
+    let device = rec.devices.find((d) => d.id === b.deviceId); const limit = active(rec) ? 5 : 3;
     if (!device && rec.devices.length >= limit) return send(res, 409, { devices: rec.devices, limit });
     if (!device) { device = { id: b.deviceId, name: 'Appareil', kind: b.kind === 'extension' ? 'extension' : 'site', seen: Date.now() }; rec.devices.push(device); }
     else { device.seen = Date.now(); if (b.kind) device.kind = b.kind; }
     save(id, rec); return send(res, 200, { name: device.name });
   }
   if (action === 'devices') return send(res, 200, { devices: rec.devices || [], limit: active(rec) ? 5 : 3 });
-  if (action === 'removedevice') {
-    if (!real) return send(res, 403);
-    rec.devices = (rec.devices || []).filter((d) => d.id !== b.deviceId); save(id, rec); return send(res, 200, { ok: true });
-  }
+  if (action === 'removedevice') { if (!real) return send(res, 403); rec.devices = (rec.devices || []).filter((d) => d.id !== b.deviceId); save(id, rec); return send(res, 200, { ok: true }); }
   return send(res, 404, { error: 'unknown action' });
 }
 
@@ -197,12 +187,9 @@ function admin(req, res) {
     const action = req.url.split('?')[0].replace(/^\/admin\//, '');
     if (action === 'stats') return send(res, 200, { accounts: fs.readdirSync(DATA).filter((name) => name.endsWith('.json')).length });
     if (action === 'create') {
-      const count = Math.min(Math.max(Number(b.count) || 1, 1), 100);
-      const days = Math.min(Math.max(Number(b.days) || 30, 1), 36500);
-      const numbers = [];
+      const count = Math.min(Math.max(Number(b.count) || 1, 1), 100), days = Math.min(Math.max(Number(b.days) || 30, 1), 36500), numbers = [];
       while (numbers.length < count) {
-        const num = Array.from({ length: 4 }, () => String(crypto.randomInt(10000)).padStart(4, '0')).join('');
-        const id = hx('silo-id:' + num);
+        const num = Array.from({ length: 4 }, () => String(crypto.randomInt(10000)).padStart(4, '0')).join(''), id = hx('silo-id:' + num);
         if (load(id)) continue;
         save(id, { th: null, blob: null, version: 0, history: [], life: !!b.lifetime, exp: b.lifetime ? null : Date.now() + days * DAY, devices: [] });
         numbers.push(num.replace(/(\d{4})(?=\d)/g, '$1 '));
@@ -213,6 +200,12 @@ function admin(req, res) {
     if (!/^\d{16}$/.test(num)) return send(res, 400, { error: 'invalid account number' });
     const id = hx('silo-id:' + num), rec = load(id);
     if (!rec) return send(res, 404, { error: 'account not found' });
+    if (action === 'recovery-key') {
+      if (rec.th === null || rec.th === undefined) return send(res, 409, { error: 'account not activated' });
+      const key = crypto.randomBytes(32).toString('base64url');
+      rec.resetKeyHash = hx(key); rec.resetKeyExpiresAt = Date.now() + RESET_KEY_TTL; save(id, rec);
+      return send(res, 200, { key, expiresAt: rec.resetKeyExpiresAt, ttlSeconds: 60, resetsVault: true });
+    }
     if (action === 'extend') {
       if (b.lifetime) { rec.life = true; rec.exp = null; }
       else { const days = Number(b.days); if (!Number.isFinite(days) || days < 1 || days > 36500) return send(res, 400); rec.exp = Math.max(Date.now(), rec.exp || 0) + days * DAY; }
@@ -220,7 +213,7 @@ function admin(req, res) {
     }
     if (action === 'reset') { save(id, { th: null, blob: null, version: 0, history: [], life: !!rec.life, exp: rec.exp || null, devices: [] }); return send(res, 200, { ok: true }); }
     if (action === 'delete') { fs.rmSync(file(id), { force: true }); return send(res, 200, { ok: true }); }
-    return send(res, 404, { error: 'unknown admin action' });
+    return send(res, 404, { error: 'unknown action' });
   }).catch((e) => send(res, e.statusCode || 400, { error: 'invalid request' }));
 }
 
@@ -233,28 +226,20 @@ function serve(req, res) {
   if (requested === '/suite.html') requested = '/home.html';
   const resolved = path.resolve(PUB, '.' + requested);
   if (!resolved.startsWith(PUB + path.sep)) return send(res, 404, { error: 'not found' });
-  let stat;
-  try { stat = fs.statSync(resolved); } catch { return send(res, 404, { error: 'not found' }); }
+  let stat; try { stat = fs.statSync(resolved); } catch { return send(res, 404, { error: 'not found' }); }
   if (!stat.isFile()) return send(res, 404, { error: 'not found' });
   const types = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
   res.writeHead(200, { ...headers, 'Content-Type': types[path.extname(resolved).toLowerCase()] || 'application/octet-stream' });
   if (req.method === 'HEAD') return res.end();
   fs.createReadStream(resolved).on('error', () => { if (!res.headersSent) send(res, 500); else res.destroy(); }).pipe(res);
 }
-
 const publicServer = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url.split('?')[0] === '/health') {
-    res.writeHead(200, { ...headers, 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('ok');
-  }
-  if (req.method === 'POST' && req.url.startsWith('/api/')) {
-    api(req, res).catch((e) => send(res, e.statusCode || 400, { error: 'invalid request' })); return;
-  }
+  if (req.method === 'GET' && req.url.split('?')[0] === '/health') { res.writeHead(200, { ...headers, 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('ok'); }
+  if (req.method === 'POST' && req.url.startsWith('/api/')) { api(req, res).catch((e) => send(res, e.statusCode || 400, { error: 'invalid request' })); return; }
   if (req.url.startsWith('/admin/')) return send(res, 404, { error: 'not found' });
   serve(req, res);
 });
 publicServer.listen(PORT, () => console.log(`SecureVault public server listening on port ${PORT}`));
-
-// Admin API is bound to loopback only; it is deliberately not exposed by the public listener.
 if (ADMIN) {
   http.createServer((req, res) => {
     if (req.method !== 'POST' || !req.url.startsWith('/admin/')) return send(res, 404, { error: 'not found' });
