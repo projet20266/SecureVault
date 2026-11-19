@@ -1,32 +1,27 @@
-# SecureVault — coffre-fort zéro-knowledge
+# SecureVault
 
-Projet de gestion de mots de passe sans email, chiffré dans le navigateur avant envoi.
+Coffre de mots de passe chiffré dans le navigateur, sans email à l'inscription.
 
-## Lancer le site
+## Démarrer en local
 
-npm install
+```sh
 node server.js
+```
 
-Puis ouvrir :
-- http://localhost:3000/
-- http://localhost:3000/app
+Ouvre ensuite [http://localhost:3000/](http://localhost:3000/) pour la page d'accueil ou [http://localhost:3000/app](http://localhost:3000/app) pour le coffre. WebCrypto nécessite HTTPS en production (localhost est accepté en développement).
 
-## Structure
+## Ce qui fonctionne dans l'interface
 
-- public/ : pages web
-- extension/ : extension navigateur
-- admin/ : bot Telegram et webhook paiement
-- tests/ : vérifications de base
-- server.js : serveur HTTP minimal
+- création d'un compte avec un numéro aléatoire généré par le navigateur ;
+- ouverture et chiffrement du coffre en AES-GCM avec une clé dérivée par PBKDF2 ;
+- ajout, recherche, affichage/masquage et suppression d'accès ;
+- générateur de mots de passe via `crypto.getRandomValues` ;
+- vérification locale des mots de passe faibles et réutilisés ;
+- verrouillage manuel et automatique ;
+- navigation vers l'accueil et la page de confidentialité.
 
-## Sécurité
+Le panneau d'interface conserve le thème de connexion d'origine. L'outil de chiffrement de fichiers/dossiers a été retiré. Les fonctions de récupération, TOTP, extension et paiements ne sont pas annoncées comme actives dans cette version de l'interface tant que leurs parcours complets n'ont pas été réintégrés et vérifiés.
 
-- plus simple, pas de journaux
-- AES-256-GCM côté navigateur
-- clé dérivée via PBKDF2
-- aucune dépendance lourde
+## Limites importantes
 
-## Remarques
-
-- Le chiffrement de fichier local a été retiré de l’interface pour garder le produit plus simple et plus cohérent.
-- Les pages publiques sont pensées pour un rendu plus sobre et premium, sans style trop généré par IA.
+Ce dépôt n'a pas fait l'objet d'un audit de sécurité. N'y stocke pas de secrets importants avant revue indépendante et tests dans un vrai navigateur. PBKDF2 et les réponses serveur actuelles demandent notamment une revue cryptographique et opérationnelle avant tout déploiement public. Le service ne doit pas être présenté comme prêt pour une commercialisation.

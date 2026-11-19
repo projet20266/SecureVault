@@ -1,545 +1,111 @@
 <!DOCTYPE html>
 <html lang="fr" data-mode="light" data-c="defaut">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SecureVault — coffre-fort privé</title>
-    <style>
-      :root {
-        --bg: #f5f7fb;
-        --surface: #ffffff;
-        --surface-soft: #eef3f8;
-        --text: #101826;
-        --muted: #5d697a;
-        --line: #dfe6ef;
-        --accent: #1f2f46;
-        --shadow: 0 20px 44px rgba(17, 24, 39, 0.07);
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font-family: Inter, "Segoe UI", sans-serif;
-      }
-      button, input, select { font: inherit; }
-      a { text-decoration: none; color: inherit; }
-      .container { max-width: 1180px; margin: 0 auto; padding: 0 22px; }
-      .hide { display: none !important; }
-      .button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 12px;
-        padding: 0.9rem 1.2rem;
-        font-weight: 700;
-        border: 1px solid var(--line);
-        background: var(--surface);
-        color: var(--text);
-        cursor: pointer;
-      }
-      .button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: white;
-        box-shadow: var(--shadow);
-      }
-      .button.ghost {
-        background: transparent;
-      }
-      .auth {
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 24px;
-      }
-      .box {
-        width: 100%;
-        max-width: 420px;
-        background: var(--surface);
-        border: 1px solid var(--line);
-        border-radius: 24px;
-        padding: 28px 24px;
-        box-shadow: var(--shadow);
-      }
-      .logo { font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 22px; }
-      h1 {
-        margin: 0 0 8px;
-        font-size: 2.2rem;
-        letter-spacing: -0.05em;
-      }
-      .sub { color: var(--muted); margin: 0 0 18px; line-height: 1.6; }
-      label { display: block; font-size: 0.85rem; font-weight: 700; color: var(--muted); margin: 12px 0 6px; }
-      input[type="text"], input[type="password"] {
-        width: 100%;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--surface);
-        color: var(--text);
-        padding: 12px 14px;
-      }
-      .btn { width: 100%; margin-top: 18px; }
-      .note { margin-top: 16px; color: var(--muted); font-size: 0.88rem; }
-      .link { background: none; border: none; color: var(--accent); padding: 0; font-weight: 700; cursor: pointer; }
-      .err { min-height: 20px; margin-top: 10px; color: #b42318; font-size: 0.88rem; }
-
-      .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-      nav {
-        background: var(--surface);
-        border-right: 1px solid var(--line);
-        padding: 24px 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      nav .brand { margin: 0 8px 18px; }
-      nav button {
-        text-align: left;
-        border: none;
-        background: transparent;
-        color: var(--muted);
-        font-weight: 700;
-        padding: 10px 12px;
-        border-radius: 10px;
-        cursor: pointer;
-      }
-      nav button.on {
-        background: var(--surface-soft);
-        color: var(--text);
-      }
-      nav .logout {
-        margin-top: auto;
-      }
-      main { padding: 30px 34px; }
-      .page { display: none; }
-      .page.active { display: block; }
-      .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; }
-      h2 { margin: 0 0 18px; font-size: 2rem; letter-spacing: -0.04em; }
-      .row {
-        display: flex; align-items: center; justify-content: space-between;
-        gap: 12px; border-bottom: 1px solid var(--line); padding: 14px 0;
-      }
-      .row .meta { flex: 1; min-width: 0; }
-      .row .meta b { display: block; }
-      .row .meta span { color: var(--muted); font-size: 0.83rem; }
-      .mini {
-        border: 1px solid var(--line);
-        background: var(--surface-soft);
-        border-radius: 16px;
-        padding: 16px;
-      }
-      .pw-box {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: 12px;
-      }
-      .otp { display: inline-block; font-weight: 700; color: var(--accent); }
-      .statuses { display: flex; gap: 10px; flex-wrap: wrap; }
-      .status-pill {
-        background: var(--surface-soft);
-        border: 1px solid var(--line);
-        padding: 6px 10px;
-        border-radius: 999px;
-        font-size: 0.76rem;
-        color: var(--muted);
-      }
-      @media (max-width: 750px) {
-        .app { grid-template-columns: 1fr; }
-        nav { border-right: 0; border-bottom: 1px solid var(--line); padding: 14px; flex-direction: row; overflow-x: auto; }
-        nav .brand { display: none; }
-        .logout { margin-top: 0; }
-      }
-    </style>
-  </head>
-  <body>
-    <section id="auth" class="auth">
-      <div class="box">
-        <div class="logo">SecureVault</div>
-
-        <div id="vLogin">
-          <h1>Se connecter</h1>
-          <p class="sub">Entrez votre numéro de compte et votre mot de passe maître.</p>
-          <label for="num">Numéro</label>
-          <input id="num" type="text" inputmode="numeric" placeholder="0000 0000 0000 0000" />
-          <label for="mp">Mot de passe maître</label>
-          <input id="mp" type="password" />
-          <div id="err" class="err"></div>
-          <button id="goLogin" class="button primary btn">Ouvrir mon coffre</button>
-          <p class="note">Nouveau ? <button id="toReg" class="link">Créer un compte</button></p>
-          <p class="note"><button id="toRec" class="link">Mot de passe oublié ?</button></p>
-        </div>
-
-        <div id="vReg" class="hide">
-          <h1>Créer un compte</h1>
-          <p class="sub">Ce numéro est généré sur votre appareil. Nous ne pouvons pas le retrouver.</p>
-          <div id="newNum" class="mini" style="font-family: ui-monospace, monospace; letter-spacing: 0.08em; text-align:center;"></div>
-          <label for="mp2">Mot de passe maître</label>
-          <input id="mp2" type="password" />
-          <button id="goReg" class="button primary btn">Créer mon coffre</button>
-          <p class="note">Déjà un compte ? <button id="toLog" class="link">Se connecter</button></p>
-        </div>
-
-        <div id="vRec" class="hide">
-          <h1>Récupérer</h1>
-          <p class="sub">Entrez votre numéro, votre clé de récupération et un nouveau mot de passe.</p>
-          <label for="rnum">Numéro</label>
-          <input id="rnum" type="text" />
-          <label for="rkey">Clé de récupération</label>
-          <input id="rkey" type="text" />
-          <label for="rmp">Nouveau mot de passe</label>
-          <input id="rmp" type="password" />
-          <div id="rerr" class="err"></div>
-          <button id="goRec" class="button primary btn">Récupérer</button>
-          <p class="note"><button id="bk2" class="link">Retour</button></p>
-        </div>
-      </div>
-    </section>
-
-    <div id="app" class="app hide">
-      <nav>
-        <div class="logo">SecureVault</div>
-        <button class="on" data-p="vault">Coffre</button>
-        <button data-p="gen">Générateur</button>
-        <button data-p="health">Santé</button>
-        <button data-p="devices">Appareils</button>
-        <button data-p="set">Réglages</button>
-        <button id="logout" class="logout">Verrouiller</button>
-      </nav>
-
-      <main>
-        <section id="page-vault" class="page active">
-          <div class="toolbar">
-            <h2>Coffre</h2>
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <button class="button" id="add">Ajouter</button>
-            </div>
-          </div>
-          <div class="mini hide" id="form">
-            <label for="fn">Site</label>
-            <input id="fn" type="text" />
-            <label for="fu">Identifiant</label>
-            <input id="fu" type="text" />
-            <label for="fp">Mot de passe</label>
-            <input id="fp" type="password" />
-            <label for="ft">Clé 2FA (optionnel)</label>
-            <input id="ft" type="text" placeholder="otpauth://... ou secret" />
-            <div style="display:flex; gap:8px; margin-top:14px;">
-              <button class="button primary" id="fs">Enregistrer</button>
-              <button class="button" id="fc">Annuler</button>
-            </div>
-          </div>
-          <div id="list"></div>
-        </section>
-
-        <section id="page-gen" class="page">
-          <h2>Générateur</h2>
-          <div class="mini">
-            <div class="pw-box">
-              <div id="pw" style="font-family: ui-monospace,monospace; background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px; word-break:break-all; min-height:52px; display:flex; align-items:center;"> </div>
-              <button class="button primary" id="regen">Nouveau</button>
-            </div>
-            <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
-              <label><input type="checkbox" id="cU" checked /> A-Z</label>
-              <label><input type="checkbox" id="cN" checked /> 0-9</label>
-              <label><input type="checkbox" id="cS" checked /> Symboles</label>
-            </div>
-            <div style="margin-top:16px;">
-              <label for="len">Longueur</label>
-              <input id="len" type="range" min="8" max="64" value="20" />
-            </div>
-            <button id="cp" class="button primary" style="margin-top:18px; width: auto;">Copier</button>
-          </div>
-        </section>
-
-        <section id="page-health" class="page">
-          <h2>Santé du coffre</h2>
-          <div id="health" class="mini">Aucune analyse pour le moment.</div>
-        </section>
-
-        <section id="page-devices" class="page">
-          <h2>Appareils</h2>
-          <div id="devList" class="mini">Aucun appareil enregistré.</div>
-        </section>
-
-        <section id="page-set" class="page">
-          <h2>Réglages</h2>
-          <div class="mini" style="margin-bottom:16px;">
-            <div class="row">
-              <div class="meta"><b>Numéro de compte</b><span id="myNum">-</span></div>
-              <button class="button" id="cpNum">Copier</button>
-            </div>
-            <div class="row">
-              <div class="meta"><b>Kit de récupération</b><span>Fichier à imprimer</span></div>
-              <button class="button" id="mkRecovery">Générer</button>
-            </div>
-            <div class="row">
-              <div class="meta"><b>Mot de passe leurre</b><span>Protection discrète</span></div>
-              <button class="button" id="mkDuress">Configurer</button>
-            </div>
-          </div>
-        </section>
-      </main>
-    </div>
-
-    <script>
-      const $ = (s) => document.querySelector(s);
-      const $$ = (s) => [...document.querySelectorAll(s)];
-      const hex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
-      const enc = new TextEncoder();
-      const dec = new TextDecoder();
-      const rnd = (n) => Math.floor(Math.random() * n);
-      const api = async (act, payload = {}) => {
-        try {
-          const r = await fetch(`/api/${act}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          return { status: r.status, data: await r.json().catch(() => ({})) };
-        } catch (e) {
-          return { status: 0, data: {} };
-        }
-      };
-
-      const sha = async (s) => hex(await crypto.subtle.digest('SHA-256', enc.encode(s)));
-      const pbk = async (pass, salt) => {
-        const k = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveBits']);
-        const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode(salt), iterations: 600000, hash: 'SHA-256' }, k, 256);
-        return hex(bits);
-      };
-
-      function view(type) {
-        const screens = {
-          login: $('#vLogin'),
-          reg: $('#vReg'),
-          rec: $('#vRec')
-        };
-        Object.entries(screens).forEach(([name, el]) => {
-          el.classList.toggle('hide', name !== type);
-        });
-      }
-
-      function showPage(name) {
-        $$('nav button[data-p]').forEach((b) => b.classList.toggle('on', b.dataset.p === name));
-        $$('.page').forEach((p) => p.classList.toggle('active', p.id === `page-${name}`));
-      }
-
-      let session = null;
-      let items = [];
-      let shown = new Set();
-      let currentNum = '';
-
-      function setSession(data) {
-        session = data;
-        $('#auth').classList.add('hide');
-        $('#app').classList.remove('hide');
-        $('#myNum').textContent = data.num.replace(/(\d{4})(?=\d)/g, '$1 ');
-      }
-
-      function clearSession() {
-        session = null;
-        $('#app').classList.add('hide');
-        $('#auth').classList.remove('hide');
-        $('#mp').value = '';
-        $('#vLogin').classList.remove('hide');
-        $('#vReg').classList.add('hide');
-        $('#vRec').classList.add('hide');
-      }
-
-      async function connect() {
-        const num = $('#num').value.replace(/\D/g, '');
-        const key = $('#mp').value;
-
-        if (!num || !key) {
-          $('#err').textContent = 'Merci de remplir tous les champs.';
-          return;
-        }
-
-        $('#err').textContent = 'Ouverture…';
-        const token = await pbk(key, `auth:${num}`);
-        const id = await sha(`silo-id:${num}`);
-        const res = await api('get', { id, token });
-
-        if (res.status === 200) {
-          const payload = res.data;
-          try {
-            if (!payload.blob) {
-              items = [];
-            } else {
-              const iv = Uint8Array.from(atob(payload.blob.iv), (c) => c.charCodeAt(0));
-              const cipher = Uint8Array.from(atob(payload.blob.d), (c) => c.charCodeAt(0));
-              const keyBytes = Uint8Array.from((await pbk(key, `enc:${num}`)).match(/../g), (x) => parseInt(x, 16));
-              const secret = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
-              const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, secret, cipher);
-              const json = JSON.parse(dec.decode(plain));
-              items = Array.isArray(json) ? json : (json.items || []);
-            }
-            setSession({ num, token, id, key });
-            renderList();
-            $('#err').textContent = '';
-          } catch (e) {
-            $('#err').textContent = 'Le coffre est illisible ou le mot de passe est incorrect.';
-          }
-        } else if (res.status === 401) {
-          $('#err').textContent = 'Mot de passe incorrect.';
-        } else if (res.status === 423 || res.status === 404) {
-          $('#err').textContent = 'Compte introuvable.';
-        } else {
-          $('#err').textContent = 'Serveur indisponible.';
-        }
-      }
-
-      async function saveVault() {
-        if (!session) return;
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const keyHex = await pbk($('#mp').value || session.key, `enc:${session.num}`);
-        const keyBytes = Uint8Array.from(keyHex.match(/../g), (x) => parseInt(x, 16));
-        const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
-        const blob = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(items)));
-        const res = await api('put', { id: session.id, token: session.token, blob: { iv: btoa(String.fromCharCode(...new Uint8Array(iv))), d: btoa(String.fromCharCode(...new Uint8Array(blob))) } });
-        if (res.status !== 200) {
-          console.warn('save failed', res.status, res.data);
-        }
-      }
-
-      function renderList() {
-        if (!items.length) {
-          $('#list').innerHTML = '<div class="mini">Aucun mot de passe enregistré.</div>';
-          return;
-        }
-
-        $('#list').innerHTML = items.map((item, index) => `
-          <div class="row">
-            <div class="meta">
-              <b>${item.n || 'Sans nom'}</b>
-              <span>${shown.has(index) ? item.u || '—' : '••••••••'}</span>
-              ${item.t ? `<span class="otp" data-otp="${index}">${item.t.slice(0, 3)} ${item.t.slice(3)} • 30s</span>` : ''}
-            </div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <button class="button" data-visit="${index}">${shown.has(index) ? 'Masquer' : 'Voir'}</button>
-              <button class="button" data-copy="${index}">Copier</button>
-              <button class="button" data-delete="${index}">Supprimer</button>
-            </div>
-          </div>
-        `).join('');
-
-        $$('[data-visit]').forEach((button) => {
-          button.addEventListener('click', () => {
-            const idx = Number(button.dataset.visit);
-            if (shown.has(idx)) shown.delete(idx); else shown.add(idx);
-            renderList();
-          });
-        });
-
-        $$('[data-copy]').forEach((button) => {
-          button.addEventListener('click', async () => {
-            const idx = Number(button.dataset.copy);
-            const item = items[idx];
-            await navigator.clipboard.writeText(item.p || '');
-          });
-        });
-
-        $$('[data-delete]').forEach((button) => {
-          button.addEventListener('click', async () => {
-            const idx = Number(button.dataset.delete);
-            items.splice(idx, 1);
-            await saveVault();
-            renderList();
-          });
-        });
-      }
-
-      $('#goLogin').addEventListener('click', connect);
-      $('#toReg').addEventListener('click', () => {
-        currentNum = Array.from({ length: 4 }, () => String(Math.floor(Math.random() * 10000)).padStart(4, '0')).join(' ');
-        $('#newNum').textContent = currentNum;
-        view('reg');
-      });
-      $('#toRec').addEventListener('click', () => view('rec'));
-      $('#toLog').addEventListener('click', () => view('login'));
-      $('#bk2').addEventListener('click', () => view('login'));
-
-      $('#goReg').addEventListener('click', async () => {
-        const num = currentNum.replace(/\s+/g, '');
-        const pass = $('#mp2').value;
-        if (!num || !pass) {
-          $('#err').textContent = 'Mot de passe requis.';
-          return;
-        }
-        const id = await sha(`silo-id:${num}`);
-        const token = await pbk(pass, `auth:${num}`);
-        const res = await api('register', { id, token });
-        if (res.status === 200) {
-          setSession({ num, id, token, key: pass });
-          items = [];
-          renderList();
-          $('#mp2').value = '';
-        } else {
-          $('#err').textContent = 'Création du compte impossible.';
-        }
-      });
-
-      $('#goRec').addEventListener('click', async () => {
-        const num = $('#rnum').value.replace(/\D/g, '');
-        const key = $('#rkey').value.trim();
-        const pass = $('#rmp').value;
-        if (!num || !key || !pass) {
-          $('#rerr').textContent = 'Tous les champs sont requis.';
-          return;
-        }
-        const id = await sha(`silo-id:${num}`);
-        const r = await api('recover', { id, rtoken: await pbk(key, 'recovery') });
-        if (r.status !== 200) {
-          $('#rerr').textContent = 'Clé ou numéro invalide.';
-          return;
-        }
-        const token = await pbk(pass, `auth:${num}`);
-        const res = await api('reset', { id, rtoken: await pbk(key, 'recovery'), token, blob: { iv: 'x', d: 'y' }, rw: { iv: 'x', d: 'y' } });
-        if (res.status === 200) {
-          $('#rerr').textContent = 'Récupération effectuée.';
-          setSession({ num, id, token, key: pass });
-        }
-      });
-
-      $('#logout').addEventListener('click', clearSession);
-      $('#add').addEventListener('click', () => $('#form').classList.remove('hide'));
-      $('#fc').addEventListener('click', () => $('#form').classList.add('hide'));
-      $('#fs').addEventListener('click', async () => {
-        const name = $('#fn').value.trim();
-        const user = $('#fu').value.trim();
-        const pass = $('#fp').value;
-        try {
-          items.unshift({ n: name || 'Sans nom', u: user, p: pass, t: $('#ft').value.trim() });
-          await saveVault();
-          $('#form').classList.add('hide');
-          renderList();
-        } catch (e) {
-          console.error(e);
-        }
-      });
-
-      $('#regen').addEventListener('click', () => {
-        const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*?';
-        const len = Number($('#len').value || 20);
-        let out = '';
-        for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
-        $('#pw').textContent = out;
-      });
-      $('#len').addEventListener('input', () => $('#regen').click());
-      $('#cp').addEventListener('click', async () => {
-        await navigator.clipboard.writeText($('#pw').textContent);
-      });
-      $('#cpNum').addEventListener('click', () => navigator.clipboard.writeText(session.num));
-      $('#mkRecovery').addEventListener('click', () => {
-        if (session) alert('Le kit de récupération est disponible dans la version complète du projet.');
-      });
-      $('#mkDuress').addEventListener('click', () => {
-        if (session) alert('Le mot de passe leurre est disponible dans la version complète du projet.');
-      });
-
-      $('#regen').click();
-      view('login');
-      showPage('vault');
-    </script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>SecureVault — coffre-fort privé</title>
+<style>
+:root{--h:220;--bg:#fff;--surf:#fff;--soft:#f3f4f6;--line:#e5e7eb;--fg:#111827;--mut:#6b7280;--acc:#2f5bff;--onacc:#fff;--ok:#16856b;--bad:#b42318}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 Nunito,system-ui,-apple-system,"Segoe UI",sans-serif}button,input,select{font:inherit;color:inherit}button{cursor:pointer}.hide{display:none!important}
+/* L'écran de connexion conserve le thème d'origine. */
+.auth{min-height:100vh;display:grid;place-items:center;padding:24px}.box{width:100%;max-width:420px;background:var(--surf);border:1px solid var(--line);border-radius:20px;padding:32px}.logo{font-weight:700;font-size:22px;letter-spacing:-.02em;margin-bottom:32px}h1{font-weight:800;font-size:28px;line-height:1.15;letter-spacing:-.025em;margin:0 0 8px}p.sub{color:var(--mut);margin:0 0 24px}label{display:block;font-size:14px;font-weight:500;margin:16px 0 6px}input[type=text],input[type=password],input[type=search]{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surf);outline:none}input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}.btn{border:0;background:var(--acc);color:var(--onacc);padding:12px 18px;border-radius:10px;font-weight:700;cursor:pointer;width:100%;margin-top:20px}.btn.s{background:var(--soft);color:var(--fg);width:auto;margin:0;padding:8px 14px;font-size:14px;border:1px solid var(--line)}.link{background:none;border:0;color:var(--acc);cursor:pointer;padding:0;font-weight:600}.acct{font:600 22px/1.3 ui-monospace,Menlo,monospace;letter-spacing:.06em;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:16px;text-align:center;word-spacing:.3em;cursor:pointer}.note{font-size:14px;color:var(--mut);margin-top:12px}.err{color:var(--bad);font-size:14px;margin-top:10px;min-height:20px}
+.app{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}nav{background:var(--surf);border-right:1px solid var(--line);padding:24px 16px;display:flex;flex-direction:column;gap:4px}nav .logo{margin:0 8px 24px}nav button,nav a{display:block;text-align:left;background:none;border:0;padding:10px 12px;border-radius:8px;color:var(--mut);font-weight:600;text-decoration:none}nav button:hover,nav a:hover,nav button.on{background:var(--soft);color:var(--fg)}nav .out{margin-top:auto;color:var(--bad)}main{padding:36px 40px;max-width:1000px;width:100%}h2{font-weight:800;font-size:24px;letter-spacing:-.02em;margin:0 0 20px}.page{display:none}.page.active{display:block}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px}.row{display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--line)}.row .i{width:36px;height:36px;border-radius:9px;background:var(--soft);display:grid;place-items:center;font-weight:700;flex:none}.row .t{flex:1;min-width:0}.row .t b{display:block;overflow-wrap:anywhere}.row .t span{display:block;color:var(--mut);font-size:14px;overflow-wrap:anywhere}.actions{display:flex;gap:7px;flex-wrap:wrap}.gen{border:1px solid var(--line);border-radius:14px;padding:20px;background:var(--surf)}.pw{font:500 20px ui-monospace,Menlo,monospace;word-break:break-all;padding:14px;background:var(--soft);border-radius:10px;margin-bottom:16px;min-height:52px}.ctl{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-bottom:16px;font-size:14px}.ctl label{display:flex;gap:6px;align-items:center;margin:0}.set{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:18px 0;border-bottom:1px solid var(--line)}.set b{display:block}.set span{color:var(--mut);font-size:14px}.bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:20;max-width:calc(100vw - 32px)}.status{font-size:13px;color:var(--mut);min-height:20px}.health-card{padding:16px 0;border-bottom:1px solid var(--line)}.badge{display:inline-block;font-size:12px;padding:3px 8px;border-radius:999px;background:var(--soft);margin:3px 4px 0 0}.badge.bad{color:var(--bad)}.badge.good{color:var(--ok)}.empty{color:var(--mut);padding:20px 0}.pw-field{min-width:0}
+@media(max-width:700px){.app{grid-template-columns:1fr}nav{position:sticky;top:0;z-index:5;flex-direction:row;border-right:0;border-bottom:1px solid var(--line);padding:8px;overflow-x:auto;background:var(--surf)}nav .logo{display:none}nav button,nav a{white-space:nowrap;padding:9px}.out{margin-left:auto}main{padding:24px 18px}.row{align-items:flex-start;flex-wrap:wrap}.row .t{min-width:calc(100% - 55px)}.toolbar{align-items:flex-start}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+</style>
+</head>
+<body>
+<noscript><p style="padding:24px">JavaScript est nécessaire pour chiffrer le coffre dans ce navigateur.</p></noscript>
+<section class="auth" id="auth"><div class="box">
+ <div class="logo">SecureVault</div>
+ <div id="vLogin"><h1>Se connecter</h1><p class="sub">Entre ton numéro de compte. Pas d'email, pas de nom.</p>
+  <label for="num">Numéro de compte</label><input id="num" type="text" inputmode="numeric" autocomplete="off" placeholder="0000 0000 0000 0000">
+  <label for="mp">Mot de passe maître</label><input id="mp" type="password" autocomplete="current-password">
+  <div class="err" id="err" role="status" aria-live="polite"></div><button class="btn" id="goLogin">Ouvrir mon coffre</button>
+  <p class="note">Nouveau ? <button class="link" id="toReg">Créer un compte</button></p><p class="note"><a class="link" href="/about.html">Confidentialité</a> · <a class="link" href="/">Accueil</a></p>
+ </div>
+ <div id="vReg" class="hide"><h1>Créer un compte</h1><p class="sub">Ce numéro est généré sur ton appareil. Note-le : il ne pourra pas être retrouvé.</p>
+  <div class="acct" id="newNum" title="Cliquer pour copier"></div><label for="mp2">Mot de passe maître</label><input id="mp2" type="password" autocomplete="new-password">
+  <p class="note">Choisis un mot de passe long et unique. Sans lui, tu ne pourras pas ouvrir ton coffre.</p><div class="err" id="regErr" role="status" aria-live="polite"></div><button class="btn" id="goReg">Créer mon coffre</button><p class="note">Déjà un compte ? <button class="link" id="toLog">Se connecter</button></p>
+ </div>
+</div></section>
+<div class="app hide" id="app">
+ <nav aria-label="Navigation principale"><div class="logo">SecureVault</div><a href="/" id="homeLink">Accueil</a><button data-p="vault" class="on">Coffre</button><button data-p="gen">Générateur</button><button data-p="health">Santé</button><button data-p="set">Réglages</button><button class="out" id="logout">Verrouiller</button></nav>
+ <main>
+  <section class="page active" id="page-vault"><div class="toolbar"><h2>Coffre</h2><button class="btn s" id="add">Ajouter un accès</button></div>
+   <div id="form" class="gen hide" style="margin-bottom:20px"><label for="fn" style="margin-top:0">Site ou service</label><input id="fn" type="text" autocomplete="off" placeholder="exemple.com"><label for="fu">Identifiant</label><input id="fu" type="text" autocomplete="off"><label for="fp">Mot de passe</label><input id="fp" type="password" autocomplete="new-password"><div class="actions" style="margin-top:14px"><button class="btn s" id="makePw">Générer</button><button class="btn s" id="saveEntry">Enregistrer</button><button class="btn s" id="cancelEntry">Annuler</button></div></div>
+   <label for="search">Rechercher dans le coffre</label><input id="search" type="search" placeholder="Site ou identifiant" autocomplete="off"><div id="list"></div>
+  </section>
+  <section class="page" id="page-gen"><h2>Générateur</h2><div class="gen"><div class="pw" id="pw" aria-live="polite"></div><div class="ctl"><label>Longueur <input type="range" id="len" min="12" max="64" value="24"><b id="lenv">24</b></label><label><input type="checkbox" id="cU" checked>A-Z</label><label><input type="checkbox" id="cN" checked>0-9</label><label><input type="checkbox" id="cS" checked>Symboles</label></div><div class="actions"><button class="btn s" id="regen">Générer un nouveau</button><button class="btn s" id="copyPw">Copier</button></div></div><p class="note">Création aléatoire avec le générateur cryptographique du navigateur. Le mot de passe n'est envoyé nulle part tant que tu ne l'enregistres pas.</p></section>
+  <section class="page" id="page-health"><h2>Santé du coffre</h2><p class="sub">Analyse locale : les mots de passe ne quittent pas cet appareil.</p><button class="btn s" id="analyze">Analyser mon coffre</button><div id="health" aria-live="polite"></div></section>
+  <section class="page" id="page-set"><h2>Réglages</h2><div class="set"><div><b>Numéro de compte</b><span id="myNum"></span></div><button class="btn s" id="copyNum">Copier</button></div><div class="set"><div><b>Verrouillage automatique</b><span>Verrouille le coffre après 5 minutes sans activité.</span></div><span>5 min</span></div><div class="set"><div><b>Confidentialité</b><span>Le serveur reçoit uniquement le coffre chiffré et un jeton dérivé.</span></div><a class="link" href="/about.html">Détails</a></div><p class="note">Récupération et synchronisation multi-appareils ne sont pas proposées dans cette version de l'interface.</p></section>
+ </main>
+</div>
+<div class="toast hide" id="toast" role="status" aria-live="polite"></div>
+<script>
+'use strict';
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],enc=new TextEncoder(),dec=new TextDecoder();
+const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))),unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0)),hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+const randInt=n=>{const a=new Uint32Array(1),lim=Math.floor(2**32/n)*n;do{crypto.getRandomValues(a)}while(a[0]>=lim);return a[0]%n};
+const formatNum=n=>n.replace(/(\d{4})(?=\d)/g,'$1 '),genNum=()=>Array.from({length:16},()=>String(randInt(10))).join('');
+let newNumber=genNum(),session=null,items=[],shown=new Set(),lockTimer;
+const toast=t=>{const e=$('#toast');e.textContent=t;e.classList.remove('hide');clearTimeout(toast.timer);toast.timer=setTimeout(()=>e.classList.add('hide'),2400)};
+async function sha(s){return hex(await crypto.subtle.digest('SHA-256',enc.encode(s)))}
+async function derive(pass,salt,usage='bits'){
+ const raw=await crypto.subtle.importKey('raw',enc.encode(pass),'PBKDF2',false,['deriveBits','deriveKey']);
+ const params={name:'PBKDF2',salt:enc.encode(salt),iterations:600000,hash:'SHA-256'};
+ return usage==='key'?crypto.subtle.deriveKey(params,raw,{name:'AES-GCM',length:256},false,['encrypt','decrypt']):hex(await crypto.subtle.deriveBits(params,raw,256));
+}
+async function creds(num,pass){return{id:await sha('silo-id:'+num),token:await derive(pass,'auth:'+num),key:await derive(pass,'enc:'+num,'key')}}
+async function api(action,payload){try{const r=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});return{status:r.status,data:await r.json().catch(()=>({}))}}catch(e){return{status:0,data:{}}}}
+function showView(which){$('#vLogin').classList.toggle('hide',which!=='login');$('#vReg').classList.toggle('hide',which!=='register')}
+function showPage(name){$$('nav [data-p]').forEach(b=>b.classList.toggle('on',b.dataset.p===name));$$('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+name));if(name==='health')analyze()}
+$$('nav [data-p]').forEach(b=>b.addEventListener('click',()=>showPage(b.dataset.p)));
+$('#toReg').onclick=()=>{$('#newNum').textContent=formatNum(newNumber);showView('register')};$('#toLog').onclick=()=>showView('login');
+$('#newNum').onclick=async()=>{try{await navigator.clipboard.writeText(formatNum(newNumber));toast('Numéro copié')}catch(e){toast('Sélectionne le numéro pour le copier')}};
+function armLock(){clearTimeout(lockTimer);if(session)lockTimer=setTimeout(lock,300000)}
+['click','keydown','touchstart'].forEach(ev=>addEventListener(ev,armLock,{passive:true}));
+function enter(c,num,list,sub){session={...c,num,sub};items=list;shown.clear();$('#auth').classList.add('hide');$('#app').classList.remove('hide');$('#myNum').textContent=formatNum(num);$('#mp').value=$('#mp2').value='';showPage('vault');render();armLock()}
+function lock(){clearTimeout(lockTimer);session=null;items=[];shown.clear();$('#app').classList.add('hide');$('#auth').classList.remove('hide');$('#mp').value='';$('#err').textContent='';showView('login')}
+$('#logout').onclick=lock;
+function readVault(blob,key){if(!blob)return[];return crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(blob.iv)},key,unb64(blob.d)).then(buf=>{const value=JSON.parse(dec.decode(buf));return Array.isArray(value)?value:(Array.isArray(value.items)?value.items:[])})}
+$('#goLogin').onclick=async()=>{
+ const num=$('#num').value.replace(/\D/g,''),pass=$('#mp').value;if(num.length!==16||!pass){$('#err').textContent='Entre un numéro à 16 chiffres et ton mot de passe.';return}
+ $('#goLogin').disabled=true;$('#err').textContent='Ouverture du coffre…';
+ try{const c=await creds(num,pass),r=await api('get',{id:c.id,token:c.token});if(r.status!==200){$('#err').textContent=r.status===401?'Mot de passe incorrect.':r.status===429?'Trop de tentatives. Réessaie plus tard.':r.status===404?'Compte introuvable sur ce serveur.':'Serveur injoignable ou réponse inattendue.';return}
+  const list=await readVault(r.data.blob,c.key);enter(c,num,list,r.data.sub)}catch(e){$('#err').textContent='Impossible de déchiffrer le coffre. Vérifie le numéro et le mot de passe.'}finally{$('#goLogin').disabled=false}
+};
+$('#goReg').onclick=async()=>{
+ const pass=$('#mp2').value;if(pass.length<12){$('#regErr').textContent='Choisis une phrase secrète d’au moins 12 caractères.';return}
+ $('#goReg').disabled=true;$('#regErr').textContent='Création du coffre…';
+ try{const num=newNumber,c=await creds(num,pass),r=await api('register',{id:c.id,token:c.token});if(r.status!==200){$('#regErr').textContent=r.status===403?'Les inscriptions sont fermées sur ce serveur.':'Création impossible. Réessaie avec un nouveau numéro.';newNumber=genNum();$('#newNum').textContent=formatNum(newNumber);return}
+  const iv=crypto.getRandomValues(new Uint8Array(12)),cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv},c.key,enc.encode(JSON.stringify({v:2,items:[]})));
+  const saved=await api('put',{id:c.id,token:c.token,blob:{iv:b64(iv),d:b64(cipher)}});if(saved.status!==200){$('#regErr').textContent='Compte créé, mais initialisation du coffre échouée. Garde ton numéro : '+formatNum(num);return}
+  enter(c,num,[],{})
+ }catch(e){$('#regErr').textContent='Erreur de création. Vérifie que le site est servi en HTTPS ou sur localhost.'}finally{$('#goReg').disabled=false}
+};
+function element(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
+function render(){const q=$('#search').value.trim().toLocaleLowerCase();const list=$('#list');list.replaceChildren();const visible=items.map((item,index)=>({item,index})).filter(({item})=>(String(item.n||'')+' '+String(item.u||'')).toLocaleLowerCase().includes(q));
+ if(!visible.length){list.append(element('p','empty',items.length?'Aucun résultat.':'Ton coffre est vide. Clique sur « Ajouter un accès » pour commencer.'));return}
+ visible.forEach(({item:x,index:i})=>{const row=element('div','row'),icon=element('div','i',(String(x.n||'?')[0]).toLocaleUpperCase()),body=element('div','t'),site=element('b','',x.n||'Sans nom'),meta=element('span','',x.u||'Sans identifiant');body.append(site,meta);if(x.t){const otp=element('span','otp','Code 2FA disponible');body.append(otp)}if(shown.has(i))body.append(element('span','',x.p||''));const actions=element('div','actions'),view=element('button','btn s',shown.has(i)?'Masquer':'Voir'),copy=element('button','btn s','Copier'),remove=element('button','btn s','Supprimer');view.onclick=()=>{shown.has(i)?shown.delete(i):shown.add(i);render()};copy.onclick=()=>copySecret(x.p||'');remove.onclick=async()=>{if(!confirm('Supprimer cet accès du coffre ?'))return;items.splice(i,1);await save();render()};actions.append(view,copy,remove);row.append(icon,body,actions);list.append(row)})}
+$('#search').addEventListener('input',render);
+async function save(){if(!session)return false;try{const iv=crypto.getRandomValues(new Uint8Array(12)),cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv},session.key,enc.encode(JSON.stringify({v:2,items})));const r=await api('put',{id:session.id,token:session.token,blob:{iv:b64(iv),d:b64(cipher)}});if(r.status!==200){toast(r.status===402?'Compte en lecture seule : sauvegarde refusée.':'Synchronisation impossible.');return false}toast('Modifications enregistrées');return true}catch(e){toast('Impossible de chiffrer le coffre');return false}}
+async function copySecret(text){try{await navigator.clipboard.writeText(text);toast('Copié. Effacement du presse-papiers dans 15 s.');clearTimeout(copySecret.timer);copySecret.timer=setTimeout(()=>navigator.clipboard.writeText('').catch(()=>{}),15000)}catch(e){toast('Copie indisponible dans ce contexte') }}
+$('#add').onclick=()=>{$('#form').classList.remove('hide');$('#fn').focus()};$('#cancelEntry').onclick=()=>{$('#form').classList.add('hide');$('#fn').value=$('#fu').value=$('#fp').value=''};
+$('#saveEntry').onclick=async()=>{const n=$('#fn').value.trim(),u=$('#fu').value.trim(),p=$('#fp').value;if(!n||!p){toast('Le site et le mot de passe sont obligatoires.');return}items.unshift({n,u,p});if(await save()){render();$('#cancelEntry').click()}};
+const classes={lower:'abcdefghijklmnopqrstuvwxyz',upper:'ABCDEFGHIJKLMNOPQRSTUVWXYZ',digits:'0123456789',symbols:'!@#$%^&*()-_=+[]{}?' };
+function randomChar(pool){return pool[randInt(pool.length)]}
+function makePassword(){let pool=classes.lower+( $('#cU').checked?classes.upper:'')+($('#cN').checked?classes.digits:'')+($('#cS').checked?classes.symbols:'');if(!pool){toast('Choisis au moins une catégorie.');return ''}const n=Number($('#len').value),required=[classes.lower,...($('#cU').checked?[classes.upper]:[]),...($('#cN').checked?[classes.digits]:[]),...($('#cS').checked?[classes.symbols]:[])];if(n<required.length){toast('Augmente la longueur pour inclure chaque catégorie.');return ''}const out=required.map(randomChar);while(out.length<n)out.push(randomChar(pool));for(let i=out.length-1;i>0;i--){const j=randInt(i+1);[out[i],out[j]]=[out[j],out[i]]}return out.join('')}
+function generate(){const value=makePassword();if(value)$('#pw').textContent=value;$('#lenv').textContent=$('#len').value}
+$('#regen').onclick=generate;$('#len').oninput=generate;$('#cU').onchange=generate;$('#cN').onchange=generate;$('#cS').onchange=generate;$('#copyPw').onclick=()=>copySecret($('#pw').textContent);$('#makePw').onclick=()=>{$('#fp').value=makePassword();$('#fp').type='text'};
+$('#copyNum').onclick=()=>copySecret(formatNum(session.num));
+function passwordGrade(p){if(!p)return 0;let points=0;if(p.length>=12)points++;if(p.length>=16)points++;if(/[a-z]/.test(p)&&/[A-Z]/.test(p))points++;if(/\d/.test(p))points++;if(/[^A-Za-z0-9]/.test(p))points++;return points}
+function analyze(){const target=$('#health');if(!items.length){target.replaceChildren(element('p','empty','Ajoute des accès pour lancer une analyse.'));return}const frequencies=new Map();items.forEach(x=>frequencies.set(x.p,(frequencies.get(x.p)||0)+1));const risks=items.map(x=>({x,weak:passwordGrade(x.p)<3,reused:frequencies.get(x.p)>1})).filter(r=>r.weak||r.reused);target.replaceChildren();const summary=element('p','',`${items.length} accès analysés localement · ${risks.length} à vérifier`);target.append(summary);if(!risks.length){target.append(element('p','empty','Aucun mot de passe faible ou réutilisé détecté par les contrôles de base.'));return}risks.forEach(({x,weak,reused})=>{const row=element('div','health-card'),title=element('b','',x.n||'Sans nom');row.append(title);if(weak)row.append(element('span','badge bad','À renforcer'));if(reused)row.append(element('span','badge bad','Réutilisé'));target.append(row)})}
+$('#analyze').onclick=analyze;
+// Les codes TOTP et la récupération ne sont pas présentés comme disponibles tant que leurs parcours complets ne sont pas intégrés à cette version.
+$('#num').addEventListener('input',e=>{const n=e.target.value.replace(/\D/g,'').slice(0,16);e.target.value=n.replace(/(\d{4})(?=\d)/g,'$1 ')});
+$('#regen').click();
+</script>
+</body>
 </html>
