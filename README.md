@@ -8,20 +8,16 @@ Coffre de mots de passe chiffré dans le navigateur, sans email à l'inscription
 node server.js
 ```
 
-Ouvre ensuite [http://localhost:3000/](http://localhost:3000/) pour la page d'accueil ou [http://localhost:3000/app](http://localhost:3000/app) pour le coffre. WebCrypto nécessite HTTPS en production (localhost est accepté en développement).
+Ouvre [http://localhost:3000/](http://localhost:3000/) pour l'accueil et [http://localhost:3000/app](http://localhost:3000/app) pour l'application. WebCrypto nécessite HTTPS en production (localhost est accepté en développement).
 
-## Ce qui fonctionne dans l'interface
+## Fonctionnalités et limites
 
-- création d'un compte avec un numéro aléatoire généré par le navigateur ;
-- ouverture et chiffrement du coffre en AES-GCM avec une clé dérivée par PBKDF2 ;
-- ajout, recherche, affichage/masquage et suppression d'accès ;
-- générateur de mots de passe via `crypto.getRandomValues` ;
-- vérification locale des mots de passe faibles et réutilisés ;
-- verrouillage manuel et automatique ;
-- navigation vers l'accueil et la page de confidentialité.
+L'interface conserve le thème de connexion d'origine. Le module de chiffrement de fichiers/dossiers a été retiré. Le stockage de versions côté serveur est limité à des blobs chiffrés; le serveur ne peut pas les déchiffrer. L'API peut comparer les versions pour détecter les mises à jour concurrentes. Ces mécanismes doivent être reliés à l'interface et testés avant d'être annoncés comme fonctions disponibles.
 
-Le panneau d'interface conserve le thème de connexion d'origine. L'outil de chiffrement de fichiers/dossiers a été retiré. Les fonctions de récupération, TOTP, extension et paiements ne sont pas annoncées comme actives dans cette version de l'interface tant que leurs parcours complets n'ont pas été réintégrés et vérifiés.
+Le bot Telegram n'est pas et ne sera pas un moyen de lire les mots de passe des utilisateurs. Le serveur ne détient pas la clé permettant de déchiffrer un coffre. La récupération doit rester sous le contrôle du titulaire : kit de récupération conservé par lui, ou sauvegarde chiffrée qu'il déchiffre sur son propre appareil. Envoyer un mot de passe maître ou une clé de déchiffrement à Telegram exposerait durablement les secrets dans les messages, notifications et sauvegardes Telegram.
 
-## Limites importantes
+## Sécurité — état réel
 
-Ce dépôt n'a pas fait l'objet d'un audit de sécurité. N'y stocke pas de secrets importants avant revue indépendante et tests dans un vrai navigateur. PBKDF2 et les réponses serveur actuelles demandent notamment une revue cryptographique et opérationnelle avant tout déploiement public. Le service ne doit pas être présenté comme prêt pour une commercialisation.
+Ce dépôt n'a pas fait l'objet d'un audit indépendant. N'y stocke pas de secrets importants avant revue. Le service n'est pas prêt à être commercialisé. Les clés, la récupération, la synchronisation, les extensions et les flux de paiement exigent une revue cryptographique et des tests de bout en bout. Configure `ADMIN_TOKEN` avec un secret aléatoire fort; l'API admin écoute uniquement sur 127.0.0.1.
+
+Pour fermer les inscriptions libres, lance le serveur avec `REQUIRE_SUB=true` et crée les comptes via l'API admin locale. Les données sont stockées dans `data/` ou dans `DATA_DIR`.

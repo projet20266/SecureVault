@@ -1,4 +1,5 @@
-// Silo : serveur sans dépendance et sans journal.
+'use strict';
+// SecureVault HTTP server. The server stores only encrypted vault blobs and hashes.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -9,456 +10,254 @@ const ADMIN_PORT = Number(process.env.ADMIN_PORT || 3001);
 const DATA = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PUB = path.join(__dirname, 'public');
 const ADMIN = process.env.ADMIN_TOKEN || '';
+const REQUIRE_SUB = process.env.REQUIRE_SUB === 'true';
 const DAY = 86400000;
 const HEX = /^[a-f0-9]{64}$/;
+const MAX_BODY = 2 * 1024 * 1024;
+const HISTORY_LIMIT = 10;
 
-fs.mkdirSync(DATA, { recursive: true });
-
-const jsonHeaders = {
+fs.mkdirSync(DATA, { recursive: true, mode: 0o700 });
+const headers = {
   'Cache-Control': 'no-store',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
 };
-
 const file = (id) => path.join(DATA, `${id}.json`);
-const load = (id) => {
-  try {
-    return JSON.parse(fs.readFileSync(file(id), 'utf8'));
-  } catch (e) {
-    return null;
-  }
-};
-const save = (id, data) => fs.writeFileSync(file(id), JSON.stringify(data));
+const load = (id) => { try { return JSON.parse(fs.readFileSync(file(id), 'utf8')); } catch { return null; } };
+function save(id, record) {
+  const target = file(id);
+  const temp = `${target}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(record), { mode: 0o600 });
+  fs.renameSync(temp, target);
+}
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
 const hx = (s) => sha(s).toString('hex');
-const same = (token, hash) => {
-  try {
-    return crypto.timingSafeEqual(sha(token), Buffer.from(hash, 'hex'));
-  } catch (e) {
-    return false;
+function same(value, hash) {
+  if (typeof value !== 'string' || typeof hash !== 'string' || !HEX.test(hash)) return false;
+  return crypto.timingSafeEqual(sha(value), Buffer.from(hash, 'hex'));
+}
+function validBlob(blob) {
+  if (!blob || typeof blob.iv !== 'string' || typeof blob.d !== 'string') return null;
+  // AES-GCM uses a 12-byte IV. Restrict base64 payloads to valid encodings and reasonable sizes.
+  if (!/^[A-Za-z0-9+/]{16}$/.test(blob.iv) || !/^[A-Za-z0-9+/]+={0,2}$/.test(blob.d) || blob.d.length > MAX_BODY) return null;
+  try { if (Buffer.from(blob.iv, 'base64').length !== 12 || !Buffer.from(blob.d, 'base64').length) return null; } catch { return null; }
+  return { iv: blob.iv, d: blob.d };
+}
+const send = (res, status, value = {}) => {
+  if (res.headersSent) return;
+  res.writeHead(status, { ...headers, 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(value));
+};
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk) => {
+      data += chunk;
+      if (data.length > MAX_BODY) {
+        const err = new Error('too large'); err.statusCode = 413;
+        reject(err); req.resume();
+      }
+    });
+    req.on('end', () => {
+      if (data.length > MAX_BODY) return;
+      try { resolve(JSON.parse(data || '{}')); }
+      catch { const err = new Error('invalid JSON'); err.statusCode = 400; reject(err); }
+    });
+    req.on('error', reject);
+  });
+}
+const active = (r) => !!r.life || (!!r.exp && r.exp > Date.now());
+const subInfo = (r) => ({ life: !!r.life, exp: r.exp || null, active: active(r), daysLeft: r.life ? null : Math.max(0, Math.ceil(((r.exp || 0) - Date.now()) / DAY)) });
+const failures = new Map();
+const blocked = (id) => { const f = failures.get(id); return !!f && f.n >= 10 && Date.now() - f.t < 900000; };
+const bad = (id) => { const f = failures.get(id) || { n: 0, t: 0 }; f.n++; f.t = Date.now(); failures.set(id, f); };
+const registrations = [];
+
+async function api(req, res) {
+  const b = await readBody(req);
+  const action = req.url.slice('/api/'.length).split('?')[0];
+  const id = String(b.id || '');
+  if (!HEX.test(id)) return send(res, 400, { error: 'invalid id' });
+  if (blocked(id)) return send(res, 429, { error: 'rate limited' });
+  const rec = load(id);
+
+  if (action === 'register') {
+    if (REQUIRE_SUB) return send(res, 403, { error: 'registration closed' });
+    if (!HEX.test(String(b.token || ''))) return send(res, 400, { error: 'invalid token' });
+    const now = Date.now();
+    while (registrations.length && now - registrations[0] > 3600000) registrations.shift();
+    if (registrations.length >= 30) return send(res, 429, { error: 'registration limit reached' });
+    if (rec) return send(res, 409, { error: 'account already exists' });
+    registrations.push(now);
+    save(id, { th: hx(b.token), blob: null, version: 0, history: [], ref: null, life: false, exp: now + 30 * DAY, devices: [] });
+    return send(res, 200, { ok: true });
   }
-};
-const okBlob = (b) => b && typeof b.iv === 'string' && typeof b.d === 'string' ? { iv: b.iv, d: b.d } : null;
-const sendJSON = (res, status, obj = {}) => {
-  res.writeHead(status, { ...jsonHeaders, 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(obj));
-};
+  if (!rec) return send(res, 404, { error: 'account not found' });
 
-const body = (req) => new Promise((resolve, reject) => {
-  let data = '';
-  req.on('data', (chunk) => {
-    data += chunk;
-    if (data.length > 2e6) {
-      req.destroy();
-      reject(new Error('payload too large'));
+  if (action === 'claim') {
+    if (rec.th !== null && rec.th !== undefined) return send(res, 409, { error: 'account already activated' });
+    if (!HEX.test(String(b.token || ''))) return send(res, 400, { error: 'invalid token' });
+    rec.th = hx(b.token); save(id, rec); return send(res, 200, { ok: true });
+  }
+  if (action === 'recover') {
+    if (!rec.rth || !same(b.rtoken, rec.rth)) { bad(id); return send(res, 401, { error: 'invalid recovery key' }); }
+    failures.delete(id); return send(res, 200, { rw: rec.rw || null, blob: rec.blob || null, version: rec.version || 0 });
+  }
+  if (rec.th === null || rec.th === undefined) return send(res, 423, { error: 'account not activated' });
+
+  const real = same(b.token, rec.th);
+  const duress = !real && !!rec.dth && same(b.token, rec.dth);
+  if (!real && !duress) { bad(id); return send(res, 401, { error: 'unauthorized' }); }
+  failures.delete(id);
+
+  if (action === 'get') return send(res, 200, { blob: duress ? rec.dblob || null : rec.blob || null, sub: subInfo(rec), version: rec.version || 0, historyCount: duress ? 0 : (rec.history || []).length });
+  if (action === 'history') {
+    if (!real) return send(res, 403, { error: 'unavailable' });
+    return send(res, 200, { version: rec.version || 0, history: rec.history || [] });
+  }
+  if (action === 'put') {
+    const blob = validBlob(b.blob);
+    if (!blob) return send(res, 400, { error: 'invalid encrypted blob' });
+    if (!active(rec)) return send(res, 402, { error: 'subscription expired' });
+    const version = rec.version || 0;
+    if (b.expectedVersion !== undefined && (!Number.isSafeInteger(b.expectedVersion) || b.expectedVersion !== version)) {
+      return send(res, 409, { error: 'vault changed on another device', version });
     }
-  });
-  req.on('end', () => {
-    try {
-      resolve(JSON.parse(data || '{}'));
-    } catch (e) {
-      resolve({});
-    }
-  });
-});
-
-const fails = new Map();
-const blocked = (id) => {
-  const f = fails.get(id);
-  return !!f && f.n >= 10 && Date.now() - f.t < 900000;
-};
-const bad = (id) => {
-  const f = fails.get(id) || { n: 0, t: 0 };
-  f.n += 1;
-  f.t = Date.now();
-  fails.set(id, f);
-};
-
-const subInfo = (rec) => ({
-  life: !!rec.life,
-  exp: rec.exp || null,
-  active: !!rec.life || (rec.exp && rec.exp > Date.now()),
-  daysLeft: rec.life ? null : Math.max(0, Math.ceil(((rec.exp || 0) - Date.now()) / DAY))
-});
-
-function api(req, res) {
-  return body(req).then(async (b) => {
-    const url = req.url || '/';
-    const act = url.startsWith('/api/') ? url.slice(5) : url;
-    const id = String(b.id || '');
-
-    if (act === 'health') {
-      res.writeHead(200, { ...jsonHeaders, 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('ok');
-      return;
-    }
-
-    if (!HEX.test(id)) {
-      sendJSON(res, 400, { error: 'invalid id' });
-      return;
-    }
-
-    if (blocked(id)) {
-      sendJSON(res, 429, { error: 'blocked' });
-      return;
-    }
-
-    const rec = load(id);
-
-    if (act === 'register') {
-      if (!HEX.test(String(b.token || '')) || rec) {
-        sendJSON(res, 403, { error: 'register forbidden' });
-        return;
+    if (duress) rec.dblob = blob;
+    else {
+      if (rec.blob) {
+        rec.history = Array.isArray(rec.history) ? rec.history : [];
+        rec.history.push({ version, savedAt: Date.now(), blob: rec.blob });
+        rec.history = rec.history.slice(-HISTORY_LIMIT);
       }
-      const now = Date.now();
-      save(id, {
-        th: hx(String(b.token)),
-        blob: null,
-        ref: b.ref || null,
-        createdAt: now,
-        refGiven: false,
-        life: false,
-        exp: now + 30 * DAY,
-        devices: []
-      });
-      sendJSON(res, 200, { ok: true });
-      return;
+      rec.blob = blob;
+      rec.version = version + 1;
     }
-
-    if (!rec) {
-      sendJSON(res, 404, { error: 'not found' });
-      return;
-    }
-
-    if (act === 'claim') {
-      if (rec.th && rec.th !== null) {
-        sendJSON(res, 409, { error: 'already claimed' });
-        return;
-      }
-      if (!HEX.test(String(b.token || ''))) {
-        sendJSON(res, 400, { error: 'invalid token' });
-        return;
-      }
-      rec.th = hx(String(b.token));
-      if (b.ref && b.ref !== id && load(b.ref)) {
-        rec.ref = b.ref;
-      }
-      save(id, rec);
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    const isReal = HEX.test(String(b.token || '')) && same(b.token, rec.th || '');
-    const isDuress = !isReal && !!rec.dth && HEX.test(String(b.token || '')) && same(b.token, rec.dth || '');
-
-    if (!isReal && !isDuress) {
-      bad(id);
-      sendJSON(res, 401, { error: 'unauthorized' });
-      return;
-    }
-
-    fails.delete(id);
-
-    if (act === 'get') {
-      sendJSON(res, 200, {
-        blob: isDuress ? rec.dblob || null : rec.blob || null,
-        sub: subInfo(rec)
-      });
-      return;
-    }
-
-    if (act === 'put') {
-      const nb = okBlob(b.blob);
-      if (!nb) {
-        sendJSON(res, 400, { error: 'invalid blob' });
-        return;
-      }
-      if (!rec.life && rec.exp && rec.exp <= Date.now()) {
-        sendJSON(res, 402, { error: 'subscription expired' });
-        return;
-      }
-      if (isDuress) {
-        rec.dblob = nb;
-      } else {
-        rec.blob = nb;
-      }
-      save(id, rec);
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    if (act === 'setrecovery') {
-      if (!HEX.test(String(b.rtoken || ''))) {
-        sendJSON(res, 400, { error: 'invalid rtoken' });
-        return;
-      }
-      const nw = okBlob(b.rw);
-      if (!nw) {
-        sendJSON(res, 400, { error: 'invalid recovery blob' });
-        return;
-      }
-      rec.rth = hx(String(b.rtoken));
-      rec.rw = nw;
-      save(id, rec);
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    if (act === 'recover') {
-      if (!rec.rth || !HEX.test(String(b.rtoken || '')) || !same(b.rtoken, rec.rth)) {
-        bad(id);
-        sendJSON(res, 401, { error: 'bad recovery token' });
-        return;
-      }
-      sendJSON(res, 200, { rw: rec.rw, blob: rec.blob });
-      return;
-    }
-
-    if (act === 'reset') {
-      if (!rec.rth || !HEX.test(String(b.rtoken || '')) || !same(b.rtoken, rec.rth)) {
-        sendJSON(res, 401, { error: 'bad recovery token' });
-        return;
-      }
-      const nb = okBlob(b.blob);
-      const nw = okBlob(b.rw);
-      if (!HEX.test(String(b.token || '')) || !nb || !nw) {
-        sendJSON(res, 400, { error: 'invalid reset payload' });
-        return;
-      }
-      rec.th = hx(String(b.token));
-      rec.blob = nb;
-      rec.rw = nw;
-      delete rec.rth;
-      save(id, rec);
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    if (act === 'changepw') {
-      if (!HEX.test(String(b.newToken || ''))) {
-        sendJSON(res, 400, { error: 'invalid token' });
-        return;
-      }
-      const nb = okBlob(b.blob);
-      if (!nb) {
-        sendJSON(res, 400, { error: 'invalid blob' });
-        return;
-      }
-      if (!rec.life && rec.exp && rec.exp <= Date.now()) {
-        sendJSON(res, 402, { error: 'subscription expired' });
-        return;
-      }
-      rec.th = hx(String(b.newToken));
-      rec.blob = nb;
-      delete rec.rth;
-      delete rec.rw;
-      save(id, rec);
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    if (act === 'device') {
-      const deviceId = String(b.deviceId || '');
-      if (!/^[a-f0-9]{16,64}$/.test(deviceId)) {
-        sendJSON(res, 400, { error: 'bad device id' });
-        return;
-      }
-      rec.devices = rec.devices || [];
-      const now = Date.now();
-      rec.devices = rec.devices.filter((d) => now - d.seen < 180 * DAY);
-      let d = rec.devices.find((x) => x.id === deviceId);
-      const limit = rec.life ? 5 : 3;
-      if (!d) {
-        if (rec.devices.length >= limit) {
-          sendJSON(res, 409, { devices: rec.devices, limit });
-          return;
-        }
-        d = { id: deviceId, name: 'Appareil', kind: b.kind || 'site', seen: now };
-        rec.devices.push(d);
-      } else {
-        d.seen = now;
-        if (b.kind) d.kind = b.kind;
-      }
-      save(id, rec);
-      sendJSON(res, 200, { ok: true, name: d.name });
-      return;
-    }
-
-    if (act === 'devices') {
-      rec.devices = (rec.devices || []).filter((d) => Date.now() - d.seen < 180 * DAY);
-      save(id, rec);
-      sendJSON(res, 200, { devices: rec.devices, limit: rec.life ? 5 : 3 });
-      return;
-    }
-
-    if (act === 'removedevice') {
-      rec.devices = (rec.devices || []).filter((d) => d.id !== String(b.deviceId || ''));
-      save(id, rec);
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    if (act === 'delete') {
-      fs.unlinkSync(file(id));
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    sendJSON(res, 404, { error: 'not found' });
-  });
+    save(id, rec);
+    return send(res, 200, { ok: true, version: rec.version || version });
+  }
+  if (action === 'setrecovery') {
+    const rw = validBlob(b.rw);
+    if (!HEX.test(String(b.rtoken || '')) || !rw) return send(res, 400, { error: 'invalid recovery data' });
+    rec.rth = hx(b.rtoken); rec.rw = rw; save(id, rec); return send(res, 200, { ok: true });
+  }
+  if (action === 'reset') {
+    if (!real && !same(b.rtoken, rec.rth || '')) return send(res, 403, { error: 'unauthorized' });
+    // Recovery reset authenticates with the recovery key. Normal password reset requires the real token.
+    if (!real && (!rec.rth || !same(b.rtoken, rec.rth))) return send(res, 401, { error: 'invalid recovery key' });
+    const blob = validBlob(b.blob), rw = validBlob(b.rw);
+    if (!HEX.test(String(b.token || '')) || !blob || !rw) return send(res, 400, { error: 'invalid reset data' });
+    if (!real) {
+      rec.th = hx(b.token); rec.blob = blob; rec.rw = rw; delete rec.rth;
+      rec.version = (rec.version || 0) + 1;
+    } else return send(res, 400, { error: 'use password change flow' });
+    save(id, rec); return send(res, 200, { ok: true, version: rec.version });
+  }
+  if (action === 'setduress') {
+    const dblob = validBlob(b.dblob);
+    if (!real || !HEX.test(String(b.dtoken || '')) || same(b.dtoken, rec.th) || !dblob) return send(res, 400, { error: 'invalid decoy setup' });
+    rec.dth = hx(b.dtoken); rec.dblob = dblob; save(id, rec); return send(res, 200, { ok: true });
+  }
+  if (action === 'cleaduress') { if (!real) return send(res, 403); delete rec.dth; delete rec.dblob; save(id, rec); return send(res, 200, { ok: true }); }
+  if (action === 'changepw') {
+    const blob = validBlob(b.blob);
+    if (!real || !HEX.test(String(b.newToken || '')) || !blob) return send(res, 400, { error: 'invalid password change' });
+    if (!active(rec)) return send(res, 402, { error: 'subscription expired' });
+    rec.th = hx(b.newToken); rec.blob = blob; rec.version = (rec.version || 0) + 1; delete rec.rth; delete rec.rw; save(id, rec);
+    return send(res, 200, { ok: true, version: rec.version });
+  }
+  if (action === 'delete') {
+    if (!real) return send(res, 403);
+    fs.rmSync(file(id), { force: true }); return send(res, 200, { ok: true });
+  }
+  if (action === 'device') {
+    if (!/^[a-f0-9]{16,64}$/.test(String(b.deviceId || ''))) return send(res, 400);
+    rec.devices = (rec.devices || []).filter((d) => Date.now() - d.seen < 180 * DAY);
+    let device = rec.devices.find((d) => d.id === b.deviceId);
+    const limit = active(rec) ? 5 : 3;
+    if (!device && rec.devices.length >= limit) return send(res, 409, { devices: rec.devices, limit });
+    if (!device) { device = { id: b.deviceId, name: 'Appareil', kind: b.kind === 'extension' ? 'extension' : 'site', seen: Date.now() }; rec.devices.push(device); }
+    else { device.seen = Date.now(); if (b.kind) device.kind = b.kind; }
+    save(id, rec); return send(res, 200, { name: device.name });
+  }
+  if (action === 'devices') return send(res, 200, { devices: rec.devices || [], limit: active(rec) ? 5 : 3 });
+  if (action === 'removedevice') {
+    if (!real) return send(res, 403);
+    rec.devices = (rec.devices || []).filter((d) => d.id !== b.deviceId); save(id, rec); return send(res, 200, { ok: true });
+  }
+  return send(res, 404, { error: 'unknown action' });
 }
 
 function admin(req, res) {
-  return body(req).then(async (b) => {
-    const url = req.url || '/';
-    const act = url.startsWith('/admin/') ? url.slice(7) : url;
-    const auth = (req.headers.authorization || '').replace(/^Bearer /, '');
-
-    if (!ADMIN || auth !== ADMIN) {
-      sendJSON(res, 401, { error: 'unauthorized' });
-      return;
-    }
-
-    if (act === 'stats') {
-      const files = fs.readdirSync(DATA).filter((f) => f.endsWith('.json'));
-      sendJSON(res, 200, { accounts: files.length });
-      return;
-    }
-
-    if (act === 'create') {
-      const count = Math.min(Math.max(Number(b.count || 1), 1), 100);
-      const days = Number(b.days || 30);
-      const out = [];
-      for (let i = 0; i < count; i++) {
-        let num = Array.from({ length: 4 }, () => String(Math.floor(Math.random() * 10000)).padStart(4, '0')).join(' ');
-        const idNum = hx(`silo-id:${num.replace(/\s/g, '')}`);
-        if (load(idNum)) {
-          i--; continue;
-        }
-        save(idNum, { th: null, blob: null, life: !!b.lifetime, exp: b.lifetime ? null : Date.now() + days * DAY, createdAt: Date.now(), devices: [] });
-        out.push(num);
+  return readBody(req).then((b) => {
+    const token = (req.headers.authorization || '').replace(/^Bearer /, '');
+    if (!ADMIN || !crypto.timingSafeEqual(sha(token), sha(ADMIN))) return send(res, 401, { error: 'unauthorized' });
+    const action = req.url.split('?')[0].replace(/^\/admin\//, '');
+    if (action === 'stats') return send(res, 200, { accounts: fs.readdirSync(DATA).filter((name) => name.endsWith('.json')).length });
+    if (action === 'create') {
+      const count = Math.min(Math.max(Number(b.count) || 1, 1), 100);
+      const days = Math.min(Math.max(Number(b.days) || 30, 1), 36500);
+      const numbers = [];
+      while (numbers.length < count) {
+        const num = Array.from({ length: 4 }, () => String(crypto.randomInt(10000)).padStart(4, '0')).join('');
+        const id = hx('silo-id:' + num);
+        if (load(id)) continue;
+        save(id, { th: null, blob: null, version: 0, history: [], life: !!b.lifetime, exp: b.lifetime ? null : Date.now() + days * DAY, devices: [] });
+        numbers.push(num.replace(/(\d{4})(?=\d)/g, '$1 '));
       }
-      sendJSON(res, 200, { numbers: out });
-      return;
+      return send(res, 200, { numbers });
     }
-
-    if (act === 'extend') {
-      const num = String(b.num || '').replace(/\D/g, '');
-      const id = hx(`silo-id:${num}`);
-      const rec = load(id);
-      if (!rec) {
-        sendJSON(res, 404, { error: 'not found' });
-        return;
-      }
-      if (b.lifetime) {
-        rec.life = true;
-        rec.exp = null;
-      } else {
-        const value = Number(b.days || 30);
-        rec.exp = Math.max(Date.now(), rec.exp || Date.now()) + value * DAY;
-        rec.life = false;
-      }
-      save(id, rec);
-      sendJSON(res, 200, subInfo(rec));
-      return;
+    const num = String(b.num || '').replace(/\D/g, '');
+    if (!/^\d{16}$/.test(num)) return send(res, 400, { error: 'invalid account number' });
+    const id = hx('silo-id:' + num), rec = load(id);
+    if (!rec) return send(res, 404, { error: 'account not found' });
+    if (action === 'extend') {
+      if (b.lifetime) { rec.life = true; rec.exp = null; }
+      else { const days = Number(b.days); if (!Number.isFinite(days) || days < 1 || days > 36500) return send(res, 400); rec.exp = Math.max(Date.now(), rec.exp || 0) + days * DAY; }
+      save(id, rec); return send(res, 200, subInfo(rec));
     }
-
-    if (act === 'reset') {
-      const num = String(b.num || '').replace(/\D/g, '');
-      const id = hx(`silo-id:${num}`);
-      const rec = load(id);
-      if (!rec) {
-        sendJSON(res, 404, { error: 'not found' });
-        return;
-      }
-      save(id, { th: null, blob: null, life: rec.life || false, exp: rec.exp || null, createdAt: Date.now(), devices: [] });
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    if (act === 'delete') {
-      const num = String(b.num || '').replace(/\D/g, '');
-      const id = hx(`silo-id:${num}`);
-      if (load(id)) {
-        fs.unlinkSync(file(id));
-      }
-      sendJSON(res, 200, { ok: true });
-      return;
-    }
-
-    sendJSON(res, 404, { error: 'unknown admin action' });
-  });
+    if (action === 'reset') { save(id, { th: null, blob: null, version: 0, history: [], life: !!rec.life, exp: rec.exp || null, devices: [] }); return send(res, 200, { ok: true }); }
+    if (action === 'delete') { fs.rmSync(file(id), { force: true }); return send(res, 200, { ok: true }); }
+    return send(res, 404, { error: 'unknown admin action' });
+  }).catch((e) => send(res, e.statusCode || 400, { error: 'invalid request' }));
 }
 
-const safeServe = (req, res) => {
-  const raw = req.url.split('?')[0];
-  let requested = raw === '/' ? '/home.html' : raw;
-  if (requested === '/app') requested = '/index.html';
-  if (requested === '/app/') requested = '/index.html';
+function serve(req, res) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'method not allowed' });
+  let requested;
+  try { requested = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); } catch { return send(res, 400, { error: 'bad URL' }); }
+  if (requested === '/') requested = '/home.html';
+  if (requested === '/app' || requested === '/app/') requested = '/index.html';
   if (requested === '/suite.html') requested = '/home.html';
+  const resolved = path.resolve(PUB, '.' + requested);
+  if (!resolved.startsWith(PUB + path.sep)) return send(res, 404, { error: 'not found' });
+  let stat;
+  try { stat = fs.statSync(resolved); } catch { return send(res, 404, { error: 'not found' }); }
+  if (!stat.isFile()) return send(res, 404, { error: 'not found' });
+  const types = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+  res.writeHead(200, { ...headers, 'Content-Type': types[path.extname(resolved).toLowerCase()] || 'application/octet-stream' });
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(resolved).on('error', () => { if (!res.headersSent) send(res, 500); else res.destroy(); }).pipe(res);
+}
 
-  const normalized = path.normalize(path.join(PUB, requested));
-  if (!normalized.startsWith(PUB + path.sep) && normalized !== PUB) {
-    sendJSON(res, 404, { error: 'not found' });
-    return;
+const publicServer = http.createServer((req, res) => {
+  if (req.method === 'GET' && req.url.split('?')[0] === '/health') {
+    res.writeHead(200, { ...headers, 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('ok');
   }
-
-  const ext = path.extname(normalized).toLowerCase();
-  const typeMap = {
-    '.html': 'text/html; charset=utf-8',
-    '.js': 'application/javascript; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.svg': 'image/svg+xml',
-    '.png': 'image/png',
-    '.json': 'application/json; charset=utf-8'
-  };
-
-  if (!fs.existsSync(normalized) || fs.statSync(normalized).isDirectory()) {
-    sendJSON(res, 404, { error: 'not found' });
-    return;
+  if (req.method === 'POST' && req.url.startsWith('/api/')) {
+    api(req, res).catch((e) => send(res, e.statusCode || 400, { error: 'invalid request' })); return;
   }
-
-  res.writeHead(200, { ...jsonHeaders, 'Content-Type': typeMap[ext] || 'application/octet-stream' });
-  fs.createReadStream(normalized).pipe(res);
-};
-
-http.createServer(async (req, res) => {
-  try {
-    if (req.method === 'POST' && req.url.startsWith('/api/')) {
-      await api(req, res);
-      return;
-    }
-    if (req.url === '/health') {
-      res.writeHead(200, { ...jsonHeaders, 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('ok');
-      return;
-    }
-    if (req.method === 'POST' && req.url.startsWith('/admin/')) {
-      await admin(req, res);
-      return;
-    }
-    safeServe(req, res);
-  } catch (e) {
-    sendJSON(res, 500, { error: 'internal server error' });
-  }
-}).listen(PORT, () => {
-  console.log(`SecureVault running on http://localhost:${PORT}`);
+  if (req.url.startsWith('/admin/')) return send(res, 404, { error: 'not found' });
+  serve(req, res);
 });
+publicServer.listen(PORT, () => console.log(`SecureVault public server listening on port ${PORT}`));
 
+// Admin API is bound to loopback only; it is deliberately not exposed by the public listener.
 if (ADMIN) {
-  http.createServer(async (req, res) => {
-    try {
-      if (req.method === 'POST' && req.url.startsWith('/admin/')) {
-        await admin(req, res);
-        return;
-      }
-      sendJSON(res, 404, { error: 'not found' });
-    } catch (e) {
-      sendJSON(res, 500, { error: 'internal server error' });
-    }
-  }).listen(ADMIN_PORT, '127.0.0.1', () => {
-    console.log(`Admin API listening on http://127.0.0.1:${ADMIN_PORT}`);
-  });
+  http.createServer((req, res) => {
+    if (req.method !== 'POST' || !req.url.startsWith('/admin/')) return send(res, 404, { error: 'not found' });
+    admin(req, res).catch((e) => send(res, e.statusCode || 400, { error: 'invalid request' }));
+  }).listen(ADMIN_PORT, '127.0.0.1', () => console.log(`Admin API listening on 127.0.0.1:${ADMIN_PORT}`));
 }
